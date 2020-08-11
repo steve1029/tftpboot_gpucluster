@@ -1,0 +1,4 @@
+default node
+label node
+	kernel vmlinuz.y211
+	append root=/dev/nfs initrd=initrd.img.y211 nfsroot=192.168.100.1:/nfsroot/y211 ip=dhcp rw vga=0x318

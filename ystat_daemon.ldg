@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+
+from datetime import datetime as dt
+import subprocess as sp
+import psutil as ps
+import numpy as np
+import os, sys, time, platform
+
+"""ystat_daemon collects cpu status and process status
+about current system and stores it at /root/.ystat/<hostname>.
+In Yggdrasil, /root of yboot is mounted on /root of all nodes and data server.
+Therefore, all nodes and all servers has common /root 
+and they share each other's cpu, memory and process status.
+"""
+
+def ext_exec_wait(cmd):
+	out, err = sp.Popen(cmd.split(), stdout=sp.PIPE, stderr=sp.PIPE).communicate()
+	if err != '': print (err)
+	return out
+
+def ext_exec_nowait(cmd):
+	sp.Popen(cmd.split(), stdout=sp.PIPE, stderr=sp.PIPE)
+
+#--------------------------------------------------------------#
+# Some system might have AMD cpus. 
+# These lines gets the name of AMD cpus by importing pyopencl.
+try:
+	import pyopencl as cl
+	cl_plf = cl.get_platforms()
+	for plf in cl_plf:
+		if 'AMD' in plf.name: dev = plf.get_devices()[0]
+	cpu_name = dev.name
+
+except Exception as err:
+	cpuinfo = ext_exec_wait('/bin/cat /proc/cpuinfo')
+	cpu_name = cpuinfo[79:118]
+
+#--------------------------------------------------------------#
+
+class Dummy:
+	def write(self, s):	pass
+
+if os.fork(): os._exit(0)
+
+# Set the current process(ystat_daemon)
+# as the process group leader.
+os.setpgrp()
+os.umask(0)
+sys.stdin.close()
+sys.stdout = Dummy()
+sys.stderr = Dummy()
+
+#--------------------------------------------------------------#
+# Set the user's home directory.
+# The default home directory in Unix System is '~'.
+# If you want to change it in python environment,
+# use os.path.expanduser() method.
+# Since ystat_daemon is run by the root user,
+# home directory is '/root'
+homedir = os.path.expanduser('~')
+
+# Make folder to store the file in which has system info.
+if not os.path.exists('/root/.ystat/'): os.mkdir('/root/.ystat')
+myname = platform.node()
+
+while False:
+
+	try:
+		# call the list of the system's current processes
+		plist = ps.pids()
+
+		# create an array which stores the time that the process has used cpu.
+		cpu_time = np.zeros(len(plist), dtype=np.float64)
+		cpu_cnt  = ps.cpu_count()
+		cpu_pct  = ps.cpu_percent() * cpu_cnt
+
+		# get all the running processes and cpu times for each process.
+		for order, pid in enumerate(plist):
+			temp_proc = ps.Process(pid)
+
+			# the python process executed by the root is considered as zero burden.
+			if temp_proc.username() == 'root' and temp_proc.name() == 'python':
+				cpu_time[order] = 0.
+
+			# time the process had used with this cpu.
+			else: cpu_time[order] = temp_proc.cpu_times().user
+
+		# Find the largest burden process.
+		first_proc_arg = cpu_time.argmax()			# Returns the 'indices' of the maximum values along an axis.
+		first_proc     = ps.Process(plist[first_proc_arg])	# the process which uses cpu the most.
+
+		if	 hasattr(first_proc.name, '__call__'): procname = first_proc.name()
+		else									 : procname = first_proc.name
+
+		if	 hasattr(first_proc.username, '__call__'): username = first_proc.username()
+		else										 : username = first_proc.username
+
+		first_cpu_usage = first_proc.cpu_percent()
+		first_proc_id	= first_proc.pid
+
+		# Find the second largest burden process.
+		cpu_time[first_proc_arg] = 0
+		second_proc_arg  = cpu_time.argmax()
+		second_proc      = ps.Process(plist[second_proc_arg])
+		second_cpu_usage = second_proc.get_cpu_percent()
+
+		# If second largest process is big enough,
+		# we consider the system is running two processes.
+		if second_cpu_usage > 50. : two_procs = 1
+		else : two_procs = 0
+
+		mems    = ps.virtual_memory()
+		now     = dt.now()
+		now_sec = ((now.day*24 + now.hour)*60 + now.minute)*60 + now.second
+		data    = (myname, cpu_name, cpu_cnt, cpu_pct, username, proc_id, proc_name, proc_pct,\
+					mems.total, mems.used, mems.percent, now_sec, two_procs)
+
+		info  = file('/root/.ystat/%s' % myname, 'w')
+		info.write('%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' % data)
+		info.close()
+
+	except Exception as err:
+		print (err)
+		pass
+
+	time.sleep(60)

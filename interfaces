@@ -1,0 +1,24 @@
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+# The primary network interface
+auto eth0
+iface eth0 inet static
+	address 163.152.45.250
+	netmask 255.255.255.0
+	network	163.152.45.0
+	gateway 163.152.45.1
+	dns-nameservers 163.152.1.1
+	
+auto bond0
+iface bond0 inet static
+	address 192.168.100.1
+	netmask 255.255.255.0
+	network	192.168.100.0
+	slaves eth2 eth3 eth4 eth5
+	bond-mode 0
+	bond-miimon 100
